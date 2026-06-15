@@ -47,7 +47,8 @@ This dashboard can be deployed without `docdoor-backend-api` for the current MVP
 
 ### Vercel notes
 
-- `vercel.json` sets Mumbai (`bom1`) as the default region and extends API route timeouts for transcription.
+- Keep `vercel.json` minimal. Route timeouts are configured in each API route via `export const maxDuration`.
+- Commit an up-to-date `package-lock.json` after any dependency change (`npm install`).
 - Audio uploads are limited to about **4 MB** on Vercel serverless functions. Keep consultations short or split very long visits.
 - Longer transcription jobs may require a **Vercel Pro** plan for function durations above the Hobby limit.
 - Do not prefix `OPENAI_API_KEY` with `NEXT_PUBLIC_`.
