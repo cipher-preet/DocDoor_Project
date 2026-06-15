@@ -1,0 +1,16 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "installCommand": "npm install",
+  "buildCommand": "npm run build",
+  "regions": ["bom1"],
+  "functions": {
+    "src/app/api/doctor-prescription/transcribe/route.ts": {
+      "maxDuration": 60,
+      "memory": 1024
+    },
+    "src/app/api/doctor-prescription/extract/route.ts": {
+      "maxDuration": 30
+    }
+  }
+}
