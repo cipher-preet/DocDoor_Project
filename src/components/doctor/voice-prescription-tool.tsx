@@ -26,6 +26,11 @@ import {
   type ProcessingStage,
 } from "@/lib/ai/prescription-types";
 import { MAX_CONSULTATION_AUDIO_BYTES, MAX_CONSULTATION_AUDIO_LABEL } from "@/lib/ai/upload-limits";
+import {
+  prescriptionDoctorName,
+  savePrescriptionToHistory,
+  updatePrescriptionHistory,
+} from "@/lib/prescription/history-storage";
 
 function PreviewList({ empty, items }: { empty: string; items: string[] }) {
   if (items.length === 0) {
@@ -96,13 +101,13 @@ function statusLabel(stage: ProcessingStage) {
     case "recording":
       return "Recording consultation. Tap the mic when the visit is complete.";
     case "transcribing":
-      return "Transcribing audio with OpenAI…";
+      return "Preparing consultation notes…";
     case "analyzing":
-      return "Analyzing consultation and filling prescription fields…";
+      return "Building your prescription draft…";
     case "error":
       return "Processing failed. Review the message below and try again.";
     default:
-      return "Ready to record the doctor-patient consultation.";
+      return "Ready to begin the consultation.";
   }
 }
 
@@ -119,6 +124,7 @@ export function VoicePrescriptionTool() {
   const audioChunksRef = useRef<BlobPart[]>([]);
   const recorderMimeTypeRef = useRef("");
   const recordingTimerRef = useRef<number | null>(null);
+  const currentHistoryIdRef = useRef<string | null>(null);
 
   const isRecording = processingStage === "recording";
   const isProcessing = processingStage === "transcribing" || processingStage === "analyzing";
@@ -151,6 +157,7 @@ export function VoicePrescriptionTool() {
     setErrorMessage("");
     setProcessingStage("idle");
     setRecordingSeconds(0);
+    currentHistoryIdRef.current = null;
   }
 
   function stopMediaTracks() {
@@ -206,7 +213,16 @@ export function VoicePrescriptionTool() {
         throw new Error(extractPayload.error ?? "Prescription extraction failed.");
       }
 
-      setPrescription(extractPayload.prescription ?? emptyPrescriptionDraft());
+      const nextPrescription = extractPayload.prescription ?? emptyPrescriptionDraft();
+      setPrescription(nextPrescription);
+
+      const savedRecord = savePrescriptionToHistory({
+        prescription: nextPrescription,
+        transcript: nextTranscript,
+        status: "Draft",
+      });
+
+      currentHistoryIdRef.current = savedRecord?.id ?? null;
       setProcessingStage("idle");
     } catch (error) {
       setProcessingStage("error");
@@ -296,6 +312,11 @@ export function VoicePrescriptionTool() {
 
   function handleExportPdf() {
     setIsExportMenuOpen(false);
+
+    if (currentHistoryIdRef.current) {
+      updatePrescriptionHistory(currentHistoryIdRef.current, { status: "Finalized" });
+    }
+
     window.setTimeout(() => window.print(), 180);
   }
 
@@ -312,10 +333,13 @@ export function VoicePrescriptionTool() {
     try {
       if (navigator.share) {
         await navigator.share(shareData);
-        return;
+      } else {
+        await navigator.clipboard.writeText(shareText);
       }
 
-      await navigator.clipboard.writeText(shareText);
+      if (currentHistoryIdRef.current) {
+        updatePrescriptionHistory(currentHistoryIdRef.current, { status: "Shared" });
+      }
     } catch {
       setErrorMessage("Share was cancelled or blocked by the browser.");
       setProcessingStage("error");
@@ -331,7 +355,7 @@ export function VoicePrescriptionTool() {
           <BrandMark size="sm" tone="light" />
           <div className="flex flex-wrap items-center justify-end gap-2 text-xs font-semibold">
             <span className="rounded-full border border-midnight-900/10 bg-white/75 px-3 py-2 text-slate-grey shadow-liquid-sm">
-              Dr. Gagandeep S Sachdeva
+              {prescriptionDoctorName}
             </span>
             <Link
               className="focus-ring inline-flex items-center gap-2 rounded-full border border-midnight-900/10 bg-white/75 px-3 py-2 text-midnight-950 shadow-liquid-sm transition hover:bg-white"
@@ -388,10 +412,10 @@ export function VoicePrescriptionTool() {
                 <div>
                   <p className="text-sm font-semibold uppercase tracking-wide text-prestige-gold">Voice prescription</p>
                   <h1 className="mt-3 max-w-xl text-3xl font-semibold leading-tight text-white sm:text-4xl">
-                    Record the consultation. AI fills the prescription draft.
+                    Speak with your patient. Create the prescription.
                   </h1>
                   <p className="mt-4 max-w-xl text-sm leading-6 text-white/70 sm:text-base sm:leading-7">
-                    DocDoor records the full doctor-patient conversation, transcribes it with OpenAI, and extracts symptoms, assessment, medicines, precautions, and advice only when clearly mentioned.
+                    Record the consultation, review the draft, and finalize symptoms, assessment, medicines, precautions, and advice before sharing.
                   </p>
                 </div>
 
@@ -428,7 +452,7 @@ export function VoicePrescriptionTool() {
                           isRecording ? "animate-pulse bg-emerald-400" : isProcessing ? "animate-pulse bg-prestige-gold" : "bg-prestige-gold",
                         )}
                       />
-                      {isRecording ? "Recording consultation" : isProcessing ? "Processing with AI" : "Tap to start recording"}
+                      {isRecording ? "Recording consultation" : isProcessing ? "Preparing prescription" : "Tap to start consultation"}
                     </div>
                     {isRecording ? <p className="text-xs font-medium text-white/60">{formattedDuration}</p> : null}
                   </div>
@@ -447,15 +471,15 @@ export function VoicePrescriptionTool() {
 
               {processingStage === "transcribing" ? (
                 <LoadingOverlay
-                  label="Transcribing consultation"
-                  sublabel="Sending the full recording to OpenAI Whisper."
+                  label="Preparing consultation notes"
+                  sublabel="Review the conversation before finalizing the prescription."
                 />
               ) : null}
 
               {processingStage === "analyzing" ? (
                 <LoadingOverlay
-                  label="Analyzing consultation"
-                  sublabel="Extracting symptoms, assessment, medicines, precautions, and advice from the transcript."
+                  label="Building prescription draft"
+                  sublabel="Organizing symptoms, assessment, medicines, precautions, and advice."
                 />
               ) : null}
 
@@ -467,7 +491,7 @@ export function VoicePrescriptionTool() {
                   <p>{transcript}</p>
                 ) : (
                   <p className="text-slate-grey">
-                    The full doctor-patient conversation will appear here after you stop recording. Fields stay empty until the AI finds clear information in the transcript.
+                    The consultation conversation will appear here after you stop recording. Prescription fields update from what is discussed with the patient.
                   </p>
                 )}
               </div>
@@ -484,7 +508,7 @@ export function VoicePrescriptionTool() {
             {processingStage === "analyzing" ? (
               <LoadingOverlay
                 label="Building prescription draft"
-                sublabel="Only explicitly mentioned symptoms, assessment, medicines, precautions, and advice will be filled."
+                sublabel="Review each section before export or sharing."
               />
             ) : null}
 
@@ -510,7 +534,7 @@ export function VoicePrescriptionTool() {
               </div>
               <div>
                 <p className="font-medium text-slate-grey">Doctor</p>
-                <p className="mt-1 text-sm font-semibold text-midnight-950">Dr. Gagandeep S Sachdeva</p>
+                <p className="mt-1 text-sm font-semibold text-midnight-950">{prescriptionDoctorName}</p>
               </div>
             </div>
 
@@ -580,7 +604,7 @@ export function VoicePrescriptionTool() {
               <div className="flex items-start gap-2 text-[10px] leading-4 text-slate-grey">
                 <ShieldCheck className="mt-0.5 shrink-0 text-prestige-gold" size={14} aria-hidden="true" />
                 <p>
-                  AI-generated draft from the consultation recording. Doctor must verify all details before clinical use.
+                  Prescription draft from today&apos;s consultation. Verify all clinical details before sharing with the patient.
                 </p>
               </div>
               <div className="text-right text-xs">
